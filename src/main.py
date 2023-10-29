@@ -1,6 +1,6 @@
 import logging
 import re
-from collections import defaultdict
+from collections import Counter
 from urllib.parse import urljoin
 
 import requests_cache
@@ -100,53 +100,53 @@ def download(session):
 
 def pep(session):
     response = get_response(session, PEP_URL)
-    result = [('Статус', 'Количество')]
-    soup = BeautifulSoup(response.text, features='lxml')
-    all_tables = soup.find('section', id='numerical-index')
+    soup = BeautifulSoup(response.text, features='lxml') 
+    all_tables = find_tag(soup, 'section', attrs={'id': 'numerical-index'})
     all_tables = all_tables.find_all('tr')
-    pep_count = 0
-    status_count = defaultdict(int)
-    for table in tqdm(all_tables, desc='Parsing'):
-        rows = table.find_all('td')
-        all_status = None
-        link = None
-        for i, row in enumerate(rows):
-            if i == 0 and len(row.text) == 2:
-                all_status = row.text[1]
-                continue
-            if i == 1:
-                link_tag = find_tag(row, 'a')
-                link = link_tag['href']
-                break
-        link = urljoin(PEP_URL, link)
-        response = get_response(session, link)
+    total_pep_count = 0
+    status_counter = Counter()
+    results = [('Статус', 'Количество')]
+    for pep_line in tqdm(all_tables, desc='Parsing'):
+        total_pep_count += 1
+        short_status = pep_line.find('td').text[1:]
+        try:
+            status_ext = EXPECTED_STATUS[short_status]
+        except KeyError:
+            status_ext = []
+            logging.info(
+                f'\nОшибочный статус: {short_status}\n'
+                f'Строка PEP: {pep_line}'
+            )
+        link = find_tag(pep_line, 'a')['href']
+        full_link = urljoin(PEP_URL, link)
+        response = get_response(session, full_link)
         soup = BeautifulSoup(response.text, features='lxml')
-        dl = find_tag(soup, 'dl', attrs={'class': 'rfc2822 field-list simple'})
-        pattern = (
-                r'.*(?P<status>Active|Draft|Final|Provisional|Rejected|'
-                r'Superseded|Withdrawn|Deferred|April Fool!|Accepted)'
-            )
-        re_text = re.search(pattern, dl.text)
-        status = None
-        if re_text:
-            status = re_text.group('status')
-        if all_status and EXPECTED_STATUS.get(all_status) != status:
+        dl_tag = find_tag(soup, 'dl', attrs={'class': 'rfc2822 field-list simple'})
+        status_line = dl_tag.find(string='Status')
+        if not status_line:
+            logging.error(f'{full_link} - не найдена строка статуса')
+            continue
+        status_line = status_line.find_parent()
+        status_int = status_line.next_sibling.next_sibling.string
+        if status_int not in status_ext:
             logging.info(
-                f'Несовпадающие статусы:\n{link}\n'
-                f'Статус в карточке: {status}\n'
-                f'Ожидаемый статус: {EXPECTED_STATUS[all_status]}'
+                f'\nНесовпадающие статусы:\n{full_link}\n'
+                f'Статус в карточке - {status_int}\n'
+                f'Ожидаемые статусы - {status_ext}'
             )
-        if not all_status and status not in ('Active', 'Draft'):
-            logging.info(
-                f'Несовпадающие статусы:\n{link}\n'
-                f'Статус в карточке: {status}\n'
-                f'Ожидаемые статусы: ["Active", "Draft"]'
-            )
-        pep_count += 1
-        status_count[status] += 1
-    result.extend([(status, status_count[status]) for status in status_count])
-    result.append(('Total', pep_count))
-    return result
+        status_counter[status_int] += 1
+    results.extend(status_counter.items())
+    sum_from_cards = sum(status_counter.values())
+    if total_pep_count != sum_from_cards:
+        logging.error(
+            f'\n Неправильная сумма:\n'
+            f'Всего PEP: {total_pep_count}'
+            f'Всего статусов: {sum_from_cards}'
+        )
+        results.append(('Total', sum_from_cards))
+    else:
+        results.append(('Total', total_pep_count))
+    return results
 
 
 MODE_TO_FUNCTION = {
