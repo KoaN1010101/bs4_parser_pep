@@ -100,7 +100,7 @@ def download(session):
 
 def pep(session):
     response = get_response(session, PEP_URL)
-    soup = BeautifulSoup(response.text, features='lxml') 
+    soup = BeautifulSoup(response.text, features='lxml')
     all_tables = find_tag(soup, 'section', attrs={'id': 'numerical-index'})
     all_tables = all_tables.find_all('tr')
     total_pep_count = 0
@@ -121,7 +121,11 @@ def pep(session):
         full_link = urljoin(PEP_URL, link)
         response = get_response(session, full_link)
         soup = BeautifulSoup(response.text, features='lxml')
-        dl_tag = find_tag(soup, 'dl', attrs={'class': 'rfc2822 field-list simple'})
+        dl_tag = find_tag(
+            soup,
+            'dl',
+            attrs={'class': 'rfc2822 field-list simple'}
+        )
         status_line = dl_tag.find(string='Status')
         if not status_line:
             logging.error(f'{full_link} - не найдена строка статуса')
